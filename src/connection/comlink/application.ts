@@ -8,32 +8,18 @@
 import { windowEndpoint, expose, wrap } from 'comlink';
 import type { Endpoint } from 'comlink';
 
-import type { Contract } from '../../contract';
-import type { ApplicationSocket, Provider } from '..';
+import type { ContractId, Contract } from '../../contract';
+import type { ApplicationSocket, Provider, Remote } from '..';
 
-type MetaPlayer<C extends Contract> = ApplicationSocket<C>['metaplayer'];
-type Application<C extends Contract> = Provider<C['application']>;
 
-let metaPlayer: MetaPlayer<Contract> | null = null;
+
 let endpoint: Endpoint | null = null;
-
 function getEndpoint(): Endpoint | null {
     if (endpoint != null) return endpoint;
     // Sommes-nous dans un iframe ?
     if (window.parent === window) return null;
     endpoint = windowEndpoint(window.parent)
     return endpoint;
-}
-
-/**
- * @returns Une instance de `MetaPlayer` qui permet à l'*Application* de communiquer avec le *MetaPlayer*.
- */
-function getMetaPlayer<C extends Contract>(): MetaPlayer<C> {
-    if (metaPlayer != null) return metaPlayer;
-    const endpoint = getEndpoint();
-    if (endpoint == null) throw new Error('Application is not in an iframe');
-    metaPlayer = wrap(endpoint);
-    return metaPlayer;
 }
 
 let plugged = false;
@@ -43,7 +29,7 @@ let plugged = false;
  * 
  * @param provider L'implémentation de l'interface `Application` fournie par l'*Application*.
  */
-function plug<C extends Contract>(provider: Application<C>): void {
+function plugg<C extends UnknownContract>(provider: Application<C>): void {
     if (plugged) throw new Error('Application already plugged');
     const endpoint = getEndpoint();
     if (endpoint == null) throw new Error('Application is not in an iframe');
@@ -51,14 +37,69 @@ function plug<C extends Contract>(provider: Application<C>): void {
     plugged = true;
 }
 
+const readyPromise = new Promise<ContractId>((resolve, reject) => {
+
+});
+
+function negotiate(implemented: ContractId[]): Promise<ContractId> {
+    const endpoint = getEndpoint();
+    if (endpoint == null) throw new Error('Application is not in an iframe');
+    return new Promise<ContractId>((resolve, reject) => {
+
+    });
+}
+
 /**
  * Socket de l'*Application*.
  */
-function getSocket<C extends Contract>(): ApplicationSocket<C> {
-    getEndpoint();
+function getSocket<ID extends ContractId>(implemented: ID[]): ApplicationSocket<ID> {
+    type C = Contract[ID];
+    const endpoint = getEndpoint();
+    if (endpoint == null) throw new Error('Application is not in an iframe');
+    const remoteHandle = wrap<{
+        ping(stop: boolean): void;
+        hello(implemented: ID[]): ID;
+        get(): C['metaplayer'];
+    }>(endpoint);
+
+    let provider: null | (<I extends ID>(contractId: I, remote: Remote<Contract[I]['metaplayer']>) =>
+        Provider<Contract[I]['application']>
+    ) = null;
+
+    const tasks = [];
+
+    let id: ID | null = null;
+    let metaplayer: null | Remote<C['metaplayer']> = null;
+
+    async function get(): Promise<C['application']> {
+        if (provider == null) throw new Error('Application must be plugged before invoking metaplayer methods');
+        id = await remoteHandle.hello(implemented) as ID;
+        metaplayer = await remoteHandle.get() as Remote<C['metaplayer']>;
+
+        return provider(id, metaplayer);
+    }
+
+    expose({
+        ping(stop?: boolean) {
+            console.log('Application pinged');
+            if (!stop) remoteHandle.ping(true);
+        },
+        get(): C['application'] {
+            if (provider == null) throw new Error('Application must be plugged before invoking metaplayer methods');
+            const id = await remoteHandle.hello(implemented);
+            const metaplayer = await remoteHandle.get();
+            if (metaplayer != null) return metaplayer;
+            metaplayerPromise = remoteHandle.get(id);
+        }
+    }, endpoint);
+
+
+    const negociatedPromise = negotiate(implemented);
     return {
-        plug,
-        get metaplayer() { return getMetaPlayer(); },
+        ping() { return Promise.resolve() },
+        get contractId() { return negociatedPromise as Promise<ID>; },
+        plug(provider) { plugg(provider); },
+        get metaplayer() { return getRemoteHandle(); },
     }
 };
 
